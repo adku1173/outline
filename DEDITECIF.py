@@ -7,6 +7,7 @@ Created on Wed Jun  6 12:27:38 2018
 
 from ctypes import *
 import time
+from collections import deque
 
 class DEDITECIF(object):
     """
@@ -55,7 +56,12 @@ class DEDITECIF(object):
         3 (TTL4)    - 3 (unit A movement behind bit)
         6 (TTL7)    - 6 (unit A step bit (reading bit))
         8 (TTL3)    - 8 (unit A zero position bit (reading bit))  
-        9 (TTL1)    - 1 (unit A movement ahead bit)                   
+        9 (TTL1)    - 1 (unit A movement ahead bit) 
+        4 (TTL2)    - 4 (unit B movement behind bit)
+        2 (TTL6)    - 2 (unit B movement ahead bit) 
+        5 (TTL0)    - 7 (unit B step bit)
+        7 (TTL5)    - 9 (unit B zero position bit)
+                     
 
     other pins are not connected. Unit B is neglected.
 
@@ -96,10 +102,14 @@ class DEDITECIF(object):
         self.libPing = delib.DapiPing
         
         # Set turntable mapping constants 
-        self.foreward_unitA = 1 # ttl 1 
+        self.forward_unitA = 1 # ttl 1 
         self.backward_unitA = 4 # ttl 4
         self.step_bit_unitA = 7 # ttl 7 
         self.zero_position_bit_unitA = 3 # ttl 3 
+        self.forward_unitB = 6 #
+        self.backward_unitB = 2 #
+        self.step_bit_unitB = 0 #
+        self.zero_position_bit_unitB = 5 #
 
         # DEDITEC constants
         self.moduleID = 9 # moduleID can be figured out from delib.h file 
@@ -253,7 +263,7 @@ class DEDITECIF(object):
 ##### functions for turntable access #####
 
     #: rotate turntable backwards
-    def turn_back(self,deg=2.5):
+    def turn_back(self,deg=2.5, unit='A'):
         """ 
         rotate turntable backwards 
         
@@ -262,31 +272,40 @@ class DEDITECIF(object):
         deg: float or int (need to be a multiple of 2.5)
             specifies how many degrees to rotate
             minimum allowed value is 2.5
-            
+        unit: str ('A' or 'B'). specifies which turntable (A or B)
+            to turn
+
         Returns
         -------
         None
         """
 
+        if unit == 'A':
+            backward_unit = self.backward_unitA
+            step_bit_unit = self.step_bit_unitA
+        elif unit == 'B':
+            backward_unit = self.backward_unitB
+            step_bit_unit = self.step_bit_unitB
+            
+        step_bit_buffer = deque([],maxlen=2) # small ring cache
         numpulse = int(deg/2.5) # how many pulses to read till deg limit is reached
 
-        self.SetPinIO(self.backward_unitA) # set pin to output others to inputs        
-        self.SetValue(self.backward_unitA,1) # set Pin value to 1 
-        time.sleep(0.3) # wait for flank
+        self.SetPinIO(backward_unit) # set pin to output others to inputs        
+        self.SetValue(backward_unit,1) # set Pin value to 1 
         i = 0 # pulse count
         while True:
-            if self.GetValue(self.step_bit_unitA) > 0: # read status of position bit 
-                pass
-            else:            
+            step_bit_buffer.append(self.GetValue(step_bit_unit))
+            if list(step_bit_buffer) == [1,0]: # if falling flank
                 i += 1 # increase pulse count
                 if i == numpulse: # if enough pulses count
-                    self.SetValue(self.backward_unitA,0) # stop turning
+                    self.SetValue(backward_unit,0) # stop turning
                     break
                 else:
-                    time.sleep(0.3) # wait for next pulse
-
+                    pass
+            else:
+                pass
     #: rotate turntable forward
-    def turn_forward(self,deg=2.5):
+    def turn_forward(self,deg=2.5, unit='A'):
         """ 
         rotate turntable forward 
         
@@ -295,44 +314,67 @@ class DEDITECIF(object):
         deg: float or int (need to be a multiple of 2.5)
             specifies how many degrees to rotate
             minimum allowed value is 2.5
+        unit: str ('A' or 'B'). specifies which turntable (A or B)
+            to turn
             
         Returns
         -------
         None
         """
 
+        if unit == 'A':
+            forward_unit = self.forward_unitA
+            step_bit_unit = self.step_bit_unitA
+        elif unit == 'B':
+            forward_unit = self.forward_unitB
+            step_bit_unit = self.step_bit_unitB
+
+        step_bit_buffer = deque([],maxlen=2) # small ring cache
         numpulse = int(deg/2.5) # how many pulses for desired degree
 
-        self.SetPinIO(self.foreward_unitA) # set to output others to inputs        
-        self.SetValue(self.foreward_unitA,1)
-        time.sleep(0.3)
+        self.SetPinIO(forward_unit) # set to output others to inputs        
+        self.SetValue(forward_unit,1)
         i = 0 # pulse count
         while True:
-            if self.GetValue(self.step_bit_unitA) > 0:
-                pass
-            else:
+            step_bit_buffer.append(self.GetValue(step_bit_unit))
+            if list(step_bit_buffer) == [1,0]:
                 i += 1
                 if i == numpulse:
-                    self.SetValue(self.foreward_unitA,0)
+                    self.SetValue(forward_unit,0)
                     break
                 else:
-                    time.sleep(0.3)                    
+                    pass
+            else:
+                pass
 
     # turn turntable to zero position
-    def zero_position(self):        
+    def zero_position(self,unit='A'):        
         """
         zeros turntable position
         
+        Parameters
+        ----------
+        unit: str ('A' or 'B'). specifies which turntable (A or B)
+            to turn  
+            
         Returns
         -------
         None
         """
-        self.SetPinIO(self.backward_unitA) # set to output others to inputs     
-        self.SetValue(self.backward_unitA,1) # turn in backward direction
-        while self.GetValue(self.zero_position_bit_unitA) > 0: # 
+
+        if unit == 'A':
+            backward_unit = self.backward_unitA
+            zero_position_bit_unit = self.zero_position_bit_unitA
+        elif unit == 'B':
+            backward_unit = self.backward_unitB
+            zero_position_bit_unit = self.zero_position_bit_unitB
+
+        self.SetPinIO(backward_unit) # set to output others to inputs     
+        self.SetValue(backward_unit,1) # turn in backward direction
+        while self.GetValue(zero_position_bit_unit) > 0: # 
             pass
         else: # stop 
-            self.SetValue(self.backward_unitA,0) 
+            self.SetValue(backward_unit,0) 
             
 #
 if __name__ == '__main__':
@@ -347,19 +389,18 @@ if __name__ == '__main__':
     
     print('number digital outputs:', m.GetNumDigitalOutputs())
 
-    time.sleep(1)
-
-#   turn forward 10 deg
-    print("turn 10 degree forward...")
-    m.turn_forward(deg=10)
+#    time.sleep(1)
 #
-    time.sleep(2)
+#    print("turn 10 degree forward...")
+    m.turn_forward(deg=10,unit='A')
 #
-    print("turn to zero position...")
-    m.zero_position()
-    
-    # if turntable does not stop turning -> reset: 
-    m.SetAllOutputs(0) #set all outputs to zero
+#    time.sleep(2)
+##
+#    print("turn to zero position...")
+#    m.zero_position()
+#    
+#    # if turntable does not stop turning -> reset: 
+#    m.SetAllOutputs(0) #set all outputs to zero
 
 
         
